@@ -1,0 +1,90 @@
+---
+title: "Analyzing Aggravated Burglaries in Davidson County"
+output: html_notebook
+---
+
+**Part 1 - Data Preparation**
+
+You've been provided three datasets for this project:
+  - burglaries_2023.csv: Contains data on the aggravated burglary incidents in Davidson County. This was obtained from https://data.nashville.gov/Police/Metro-Nashville-Police-Department-Incidents/2u6v-ujjs.
+  - census.csv: Census tract level data on population and median income. This was obtained from the US Census American Community Survey.
+  - DC: A shapefile containing Davidson County census tracts
+
+Perform a spatial join to determine the census tract in which each burglary occurred. Hint: You may want to make use of the st_as_sf function in order to convert the burglaries data into an sf object.
+
+After performing the spatial join, merge in the census data. Note: Make sure that the final dataset contains all census tracts.
+
+```{r}
+library('tidyverse')
+library(sf)
+```
+
+1. Read the three datasets. 
+
+```{r}
+burglaries_2023 <- read_csv('../data/burglaries_2023.csv')
+```
+```{r}
+census <- read_csv('../data/census.csv')
+```
+
+```{r}
+davidson_tracts <- st_read('../data/DC/DC.shp')
+```
+
+```{r}
+davidson_tracts |> 
+  ggplot() + 
+  geom_sf()
+```
+
+Note: Remove the two events that occurred beyond Davidson County (latitude < 34.5, longitude > 92). 
+
+```{r}
+burglaries_2023 <- burglaries_2023 |> 
+  filter(!(latitude < 34.5))
+```
+
+2. Perform a spatial join to determine the census tract in which each burglary occurred.But first, use the st_as_sf function in order to convert the burglaries data into an sf object.
+
+```{r}
+burglaries_geo <- st_as_sf(burglaries_2023 |> drop_na(latitude), 
+                           coords = c('longitude', 'latitude'),
+                           crs = st_crs(davidson_tracts)
+                           )
+```
+
+Plot the new burglaries sf object. 
+```{r}
+burglaries_geo |> 
+  ggplot() + 
+  geom_sf()
+```
+
+Plot the Davidson County tracts with the burglary (sf) data. 
+```{r}
+davidson_tracts |> 
+  ggplot() + 
+  geom_sf() + 
+  geom_sf(data = burglaries_geo, size = 0.2)
+```
+
+Perform a spatial join using st_join function. 
+```{r}
+burglaries_tracts <- st_join(burglaries_geo, davidson_tracts, join = st_within)
+```
+
+3. After performing the spatial join, merge in the census data. Note: Make sure that the final dataset contains all census tracts.
+
+Note: Before merging, clean up census df. Rename 'tract' column in census df to 'TRACTCE'. Remove other columns that currently exist in burglaries_tracts df. 
+
+```{r}
+census <- census |> 
+  select(TRACTCE = tract, POPULATION = population, 'MEDIAN INCOME' = median_income)
+```
+
+
+```{r}
+burglaries_tracts <- merge(burglaries_tracts, census, by = 'TRACTCE')
+```
+
