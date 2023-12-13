@@ -19,6 +19,7 @@ library(tidyverse)
 library(sf)
 library(leaflet)
 library(lubridate)
+library(scales)
 ```
 
 1. Read the three datasets. 
@@ -84,7 +85,8 @@ Census dataframe with geometry:
 tract_info <- merge(census, davidson_tracts, by = 'TRACTCE')
 
 tract_info <- tract_info |> 
-  select(TRACTCE, POPULATION, `MEDIAN INCOME`, GEOMETRY = geometry)
+  select(TRACTCE, POPULATION, `MEDIAN INCOME`, GEOMETRY = geometry) |> 
+  filter(`MEDIAN INCOME` > 0)
 
 tract_info <- st_as_sf(tract_info)
 ```
@@ -197,18 +199,12 @@ burglaries_tracts |>
 ```
 
 ```{r}
-ggplot() + 
-  geom_sf(data = davidson_tracts) + 
-  geom_sf(data = tract_info, aes(fill = `MEDIAN INCOME`))
+ggplot() +
+  geom_sf(data = davidson_tracts) +
+  geom_sf(data = tract_info, aes(fill = `MEDIAN INCOME`)) +
+  scale_fill_continuous(labels = label_comma()) +
+  labs(fill = "Median Income")
 ```
-
-
-```{r}
-burglaries_unique |> 
-  st_drop_geometry() |> 
-  filter(!(TRACTCE == 980100 | TRACTCE == 980200))
-```
-
 
 What month do most burglaries occur in 2023? 
 
@@ -216,13 +212,16 @@ group_by(month) |>
 summarise(total_cases = sum(incident_number))
 
 ```{r}
-burglaries_unique <- burglaries_unique |> 
-  mutate(
-    Month = month(incident_occurred)
-  )
+burglaries_tracts <- burglaries_tracts |> 
+  mutate(Month = month(incident_occurred))
+
+burglaries_tracts |> 
+  st_drop_geometry() |> 
+  group_by(Month) |> 
+  summarise('Total Cases' = n())
 ```
 ```{r}
-str(burglaries_unique)
+str(tract_info)
 ```
 
 Out of the week, what day do most burglaries occur in 2023? 
