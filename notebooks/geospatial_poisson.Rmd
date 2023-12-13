@@ -15,8 +15,10 @@ Perform a spatial join to determine the census tract in which each burglary occu
 After performing the spatial join, merge in the census data. Note: Make sure that the final dataset contains all census tracts.
 
 ```{r}
-library('tidyverse')
+library(tidyverse)
 library(sf)
+library(leaflet)
+library(lubridate)
 ```
 
 1. Read the three datasets. 
@@ -38,7 +40,7 @@ davidson_tracts |>
   geom_sf()
 ```
 
-Note: Remove the two events that occurred beyond Davidson County (latitude < 34.5, longitude > 92). 
+Note: Remove the two events that occurred beyond Davidson County (latitude < 34.5, longitude > 92). Initially, the original burglaries data (burglaries_2023) contained 1146 rows. 
 
 ```{r}
 burglaries_2023 <- burglaries_2023 |> 
@@ -52,13 +54,6 @@ burglaries_geo <- st_as_sf(burglaries_2023 |> drop_na(latitude),
                            coords = c('longitude', 'latitude'),
                            crs = st_crs(davidson_tracts)
                            )
-```
-
-Plot the new burglaries sf object. 
-```{r}
-burglaries_geo |> 
-  ggplot() + 
-  geom_sf()
 ```
 
 Plot the Davidson County tracts with the burglary (sf) data. 
@@ -77,14 +72,162 @@ burglaries_tracts <- st_join(burglaries_geo, davidson_tracts, join = st_within)
 3. After performing the spatial join, merge in the census data. Note: Make sure that the final dataset contains all census tracts.
 
 Note: Before merging, clean up census df. Rename 'tract' column in census df to 'TRACTCE'. Remove other columns that currently exist in burglaries_tracts df. 
-
 ```{r}
 census <- census |> 
   select(TRACTCE = tract, POPULATION = population, 'MEDIAN INCOME' = median_income)
+
+burglaries_tracts <- merge(burglaries_tracts, census, by = 'TRACTCE')
+```
+
+Census dataframe with geometry: 
+```{r}
+tract_info <- merge(census, davidson_tracts, by = 'TRACTCE')
+
+tract_info <- tract_info |> 
+  select(TRACTCE, POPULATION, `MEDIAN INCOME`, GEOMETRY = geometry)
+
+tract_info <- st_as_sf(tract_info)
+```
+
+
+**Part 2 - Exploratory Analysis** 
+
+Perform some exploratory analysis on your prepared dataset.
+
+Check the unique values in TRACTCE column in burglaries_tracts. 
+```{r}
+n_distinct(burglaries_tracts$TRACTCE)
+```
+
+1. Aggregate the data by census tract. Warning: each incident can appear multiple times if there are multiple victims, so be sure that you aren't double-counting any incidents.
+
+```{r}
+burglaries_tracts <- burglaries_tracts |> 
+  distinct(incident_number, .keep_all = TRUE)
+```
+
+Which census tract had the highest number of burglaries? 
+
+```{r}
+burglaries_tracts |> 
+  st_drop_geometry() |>
+  group_by(TRACTCE) |> 
+  summarise(Count = n_distinct(incident_number)) |> 
+  arrange(desc(Count)) |> 
+  head(1)
+```
+
+Which census tract had the highest number of burglaries per 1000 residents?
+
+Example df with summarize using original columns:
+```{r}
+burglaries_tracts |> 
+  st_drop_geometry() |>
+  group_by(TRACTCE) |> 
+  summarise(Count = n_distinct(incident_number), Population = first(POPULATION), Count_Per_1000Pop = n_distinct(incident_number)/(first(POPULATION)/1000)) |> 
+  filter(Population > 0) |>
+  arrange(desc(Count_Per_1000Pop)) |> 
+  head(1)
+```
+
+This uses columns from summarize df: 
+```{r}
+burglaries_tracts |> 
+  st_drop_geometry() |>
+  group_by(TRACTCE) |> 
+  summarise(Count = n_distinct(incident_number), Population = first(POPULATION), Count_Per_1000Pop = Count/(Population/ 1000)) |> 
+  filter(Population > 0) |> 
+  arrange(desc(Count_Per_1000Pop)) |> 
+  head(1)
+```
+
+```{r}
+burglaries_tracts |> 
+  group_by(TRACTCE) |> 
+  summarise(Count = n_distinct(incident_number), Population = first(POPULATION), Count_Per_1000Pop = Count/(Population/ 1000)) |> 
+  filter(Population > 0) |> 
+  arrange(desc(Count_Per_1000Pop)) |> 
+  head(10) |> 
+  ggplot(aes(x = TRACTCE, y = Count_Per_1000Pop, fill = TRACTCE)) + geom_col() + 
+  ggtitle("Top Ten Tracts in Davidson County With High Burglary Count")
 ```
 
 
 ```{r}
-burglaries_tracts <- merge(burglaries_tracts, census, by = 'TRACTCE')
+population_summary <- burglaries_tracts |> 
+  group_by(TRACTCE) |> 
+  summarise(Count = n_distinct(incident_number), Population = first(POPULATION), Count_Per_1000Pop = Count/(Population/ 1000)) |> 
+  filter(Population > 0) |> 
+  arrange(desc(Count_Per_1000Pop))
+  
+ggplot() + 
+  geom_sf(data = davidson_tracts) +
+  geom_sf(data = population_summary, aes(color = Count_Per_1000Pop)) + 
+  scale_color_gradient(low = "blue", high = "red")
+```
+
+```{r}
+ggplot() + 
+  geom_sf(data = davidson_tracts) +
+  geom_sf(data = population_summary, aes(color = Count)) + 
+  scale_color_viridis_b() + 
+  ggtitle("2023 Burglary Data in Davidson County")
+```
+
+We're interested in the relationship between median income and number of aggravated burglaries, so examine those variables on their own and together to see what you can find. You may want to perform additional calculations, create plots, etc.
+
+```{r}
+
+```
+
+
+NOTE: 
+Removed Tracts 980100 and 980200 because they don't have geometry, population, or median income information. 
+
+```{r}
+burglaries_tracts <- burglaries_tracts |> 
+  filter(!(TRACTCE == 980100 | TRACTCE == 980200))
+```
+
+How does the median income compare throughout all tracts in Davidson County? 
+```{r}
+burglaries_tracts |> 
+  st_drop_geometry() |> 
+  summarise(Mean = mean(`MEDIAN INCOME`), Median = median(`MEDIAN INCOME`), Min = min(`MEDIAN INCOME`), Max = max(`MEDIAN INCOME`))
+```
+
+```{r}
+ggplot() + 
+  geom_sf(data = davidson_tracts) + 
+  geom_sf(data = tract_info, aes(fill = `MEDIAN INCOME`))
+```
+
+
+```{r}
+burglaries_unique |> 
+  st_drop_geometry() |> 
+  filter(!(TRACTCE == 980100 | TRACTCE == 980200))
+```
+
+
+What month do most burglaries occur in 2023? 
+
+group_by(month) |> 
+summarise(total_cases = sum(incident_number))
+
+```{r}
+burglaries_unique <- burglaries_unique |> 
+  mutate(
+    Month = month(incident_occurred)
+  )
+```
+```{r}
+str(burglaries_unique)
+```
+
+Out of the week, what day do most burglaries occur in 2023? 
+
+```{r}
+
 ```
 
