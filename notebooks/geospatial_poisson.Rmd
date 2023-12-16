@@ -219,14 +219,6 @@ ggplot() +
 
 ```{r}
 ggplot() + 
-  geom_sf(data = davidson_tracts) +
-  geom_sf(data = burglary_count, color = "grey", aes(fill = COUNT_PER_1000POP)) + 
-  scale_fill_viridis_b() + 
-  ggtitle("2023 Burglaries in Davidson County Per Tract")
-```
-
-```{r}
-ggplot() + 
   geom_sf(data = burglary_count, color = "darkgrey", aes(fill = COUNT_PER_1000POP)) + 
   scale_fill_viridis_b(breaks = seq(min(burglary_count$COUNT_PER_1000POP), max(burglary_count$COUNT_PER_1000POP), length.out = 6)) + 
   ggtitle("2023 Burglaries in Davidson County Per Tract")
@@ -356,5 +348,60 @@ est_df <- est_df |>
 est_df |>
   ggplot(aes(x = `MEDIAN INCOME`, y = `Estimated Mean Number of Burglaries`)) +
   geom_line()
+```
+
+```{r}
+str(burglary_count)
+```
+
+
+```{r}
+pr_pop_burglaries <- glm("COUNT_PER_1000POP ~ `MEDIAN INCOME`", 
+                        data = burglary_count, 
+                        family = quasipoisson)
+
+summary(pr_pop_burglaries)
+```
+```{r}
+est_df <- tibble(
+  `MEDIAN INCOME` = seq(from = min(burglary_count$`MEDIAN INCOME`, na.rm = TRUE), 
+                      to = max(burglary_count$`MEDIAN INCOME`, na.rm = TRUE), 
+                      length.out = 100)
+)
+
+est_df <- est_df |>
+  bind_cols(predict(pr_pop_burglaries, newdata = est_df, type = "response")) |>
+  rename("Estimated Mean Number of Burglaries" = "...2")
+
+est_df |>
+  ggplot(aes(x = `MEDIAN INCOME`, y = `Estimated Mean Number of Burglaries`)) +
+  geom_line()
+```
+*Poisson Regression of Count with offset term*
+```{r}
+pr_pop_burg <- glm("COUNT ~ `MEDIAN INCOME`", 
+                        data = burglary_count, 
+                        family = poisson, 
+                        offset = log(POPULATION))
+
+summary(pr_pop_burg)
+```
+```{r}
+est_df <- tibble(
+  `MEDIAN INCOME` = seq(from = min(burglary_count$`MEDIAN INCOME`, na.rm = TRUE), 
+                      to = max(burglary_count$`MEDIAN INCOME`, na.rm = TRUE), 
+                      length.out = 100), 
+  POPULATION = 1
+)
+
+est_df <- est_df |>
+  bind_cols(predict(pr_pop_burglaries, newdata = est_df, type = "response")) |>
+  rename("Estimated Mean Number of Burglaries Per Population" = "...3")
+
+burglary_count |>
+  ggplot(aes(x = `MEDIAN INCOME`, y = `COUNT_PER_1000POP`)) +
+  geom_point() + 
+  geom_line(data = est_df, aes(x = `MEDIAN INCOME`, y = `Estimated Mean Number of Burglaries Per Population`)) + 
+  scale_x_continuous(labels = comma)
 ```
 
