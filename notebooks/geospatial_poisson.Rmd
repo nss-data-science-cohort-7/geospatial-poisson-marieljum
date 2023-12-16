@@ -25,7 +25,7 @@ library(scales)
 1. Read the three datasets. 
 
 ```{r}
-burglaries_2023 <- read_csv('../data/burglaries_2023.csv')
+burglaries <- read_csv('../data/burglaries_2023.csv')
 ```
 ```{r}
 census <- read_csv('../data/census.csv')
@@ -44,14 +44,14 @@ davidson_tracts |>
 Note: Remove the two events that occurred beyond Davidson County (latitude < 34.5, longitude > 92). Initially, the original burglaries data (burglaries_2023) contained 1146 rows. 
 
 ```{r}
-burglaries_2023 <- burglaries_2023 |> 
+burglaries <- burglaries |> 
   filter(!(latitude < 34.5))
 ```
 
 2. Perform a spatial join to determine the census tract in which each burglary occurred.But first, use the st_as_sf function in order to convert the burglaries data into an sf object.
 
 ```{r}
-burglaries_geo <- st_as_sf(burglaries_2023 |> drop_na(latitude), 
+burglaries_geo <- st_as_sf(burglaries |> drop_na(latitude), 
                            coords = c('longitude', 'latitude'),
                            crs = st_crs(davidson_tracts)
                            )
@@ -70,6 +70,11 @@ Perform a spatial join using st_join function.
 burglaries_tracts <- st_join(burglaries_geo, davidson_tracts, join = st_within)
 ```
 
+How many tracts in the inital join?
+```{r}
+n_distinct(burglaries_tracts$TRACTCE)
+```
+
 3. After performing the spatial join, merge in the census data. Note: Make sure that the final dataset contains all census tracts.
 
 Note: Before merging, clean up census df. Rename 'tract' column in census df to 'TRACTCE'. Remove other columns that currently exist in burglaries_tracts df. 
@@ -80,15 +85,44 @@ census <- census |>
 burglaries_tracts <- merge(burglaries_tracts, census, by = 'TRACTCE')
 ```
 
-Census dataframe with geometry: 
+*Create a new dataframe exclusively to count burglaries per tract.*
 ```{r}
-tract_info <- merge(census, davidson_tracts, by = 'TRACTCE')
+burglary_count <- burglaries_tracts |> 
+  st_drop_geometry() |>
+  group_by(TRACTCE) |> 
+  summarise(COUNT = n_distinct(incident_number))
 
-tract_info <- tract_info |> 
-  select(TRACTCE, POPULATION, `MEDIAN INCOME`, GEOMETRY = geometry) |> 
+burglary_count  <- merge(census, burglary_count, by = 'TRACTCE')
+burglary_count <- burglary_count |> 
+  select(TRACTCE, COUNT, POPULATION, `MEDIAN INCOME`)
+
+burglary_count <- merge(burglary_count, davidson_tracts, by = 'TRACTCE')
+burglary_count <- burglary_count |> 
+  select(TRACTCE, COUNT, POPULATION, `MEDIAN INCOME`, GEOMETRY = geometry)
+```
+
+```{r}
+burglary_count |> 
+  filter(`MEDIAN INCOME` < 0) |> 
+  head(5)
+```
+
+How many tracts?
+```{r}
+n_distinct(burglary_count$TRACTCE)
+```
+
+Removed negative income:
+```{r}
+burglary_count  <- burglary_count |> 
   filter(`MEDIAN INCOME` > 0)
 
-tract_info <- st_as_sf(tract_info)
+burglary_count <- st_as_sf(burglary_count)
+```
+
+How many tracts?
+```{r}
+n_distinct(burglary_count$TRACTCE)
 ```
 
 
@@ -108,125 +142,219 @@ burglaries_tracts <- burglaries_tracts |>
   distinct(incident_number, .keep_all = TRUE)
 ```
 
-Which census tract had the highest number of burglaries? 
-
+How many unique events are there?
 ```{r}
-burglaries_tracts |> 
-  st_drop_geometry() |>
-  group_by(TRACTCE) |> 
-  summarise(Count = n_distinct(incident_number)) |> 
-  arrange(desc(Count)) |> 
-  head(1)
+n_distinct(burglaries_tracts$incident_number)
 ```
 
-Which census tract had the highest number of burglaries per 1000 residents?
-
-Example df with summarize using original columns:
+*Which census tract had the highest number of burglaries?* 
 ```{r}
-burglaries_tracts |> 
+burglary_count |> 
   st_drop_geometry() |>
-  group_by(TRACTCE) |> 
-  summarise(Count = n_distinct(incident_number), Population = first(POPULATION), Count_Per_1000Pop = n_distinct(incident_number)/(first(POPULATION)/1000)) |> 
-  filter(Population > 0) |>
-  arrange(desc(Count_Per_1000Pop)) |> 
+  arrange(desc(COUNT)) |> 
   head(1)
 ```
-
-This uses columns from summarize df: 
 ```{r}
-burglaries_tracts |> 
-  st_drop_geometry() |>
-  group_by(TRACTCE) |> 
-  summarise(Count = n_distinct(incident_number), Population = first(POPULATION), Count_Per_1000Pop = Count/(Population/ 1000)) |> 
-  filter(Population > 0) |> 
-  arrange(desc(Count_Per_1000Pop)) |> 
-  head(1)
-```
-
-```{r}
-burglaries_tracts |> 
-  group_by(TRACTCE) |> 
-  summarise(Count = n_distinct(incident_number), Population = first(POPULATION), Count_Per_1000Pop = Count/(Population/ 1000)) |> 
-  filter(Population > 0) |> 
-  arrange(desc(Count_Per_1000Pop)) |> 
+burglary_count |> 
+  arrange(desc(COUNT)) |> 
   head(10) |> 
-  ggplot(aes(x = TRACTCE, y = Count_Per_1000Pop, fill = TRACTCE)) + geom_col() + 
+  ggplot(aes(x = TRACTCE, y = COUNT, fill = TRACTCE)) + geom_col() + 
   ggtitle("Top Ten Tracts in Davidson County With High Burglary Count")
 ```
 
 
+*Which census tract had the highest number of burglaries per 1000 residents?*
 ```{r}
-population_summary <- burglaries_tracts |> 
-  group_by(TRACTCE) |> 
-  summarise(Count = n_distinct(incident_number), Population = first(POPULATION), Count_Per_1000Pop = Count/(Population/ 1000)) |> 
-  filter(Population > 0) |> 
-  arrange(desc(Count_Per_1000Pop))
-  
-ggplot() + 
-  geom_sf(data = davidson_tracts) +
-  geom_sf(data = population_summary, aes(color = Count_Per_1000Pop)) + 
-  scale_color_gradient(low = "blue", high = "red")
+burglary_count <- burglary_count |> 
+  mutate(COUNT_PER_1000POP = COUNT/(POPULATION/1000))
+```
+
+```{r}
+burglary_count |> 
+  st_drop_geometry() |>
+  arrange(desc(COUNT_PER_1000POP)) |> 
+  head(1)
+```
+```{r}
+burglary_count |> 
+  arrange(desc(COUNT_PER_1000POP)) |> 
+  head(10) |> 
+  ggplot(aes(x = TRACTCE, y = COUNT_PER_1000POP, fill = TRACTCE)) + geom_col() + 
+  ggtitle("Top Ten Tracts in Davidson County With High Burglary Count Per Population")
 ```
 
 ```{r}
 ggplot() + 
   geom_sf(data = davidson_tracts) +
-  geom_sf(data = population_summary, aes(color = Count)) + 
-  scale_color_viridis_b() + 
-  ggtitle("2023 Burglary Data in Davidson County")
+  geom_sf(data = burglary_count, aes(fill = COUNT)) + 
+  scale_fill_gradient(low = "blue", high = "red") + 
+  ggtitle("2023 Burglaries in Davidson County Per Tract")
 ```
 
-We're interested in the relationship between median income and number of aggravated burglaries, so examine those variables on their own and together to see what you can find. You may want to perform additional calculations, create plots, etc.
-
 ```{r}
-
+ggplot() + 
+  geom_sf(data = davidson_tracts) +
+  geom_sf(data = burglary_count, color = "grey", aes(fill = COUNT)) + 
+  scale_fill_viridis_b() + 
+  ggtitle("2023 Burglaries in Davidson County Per Tract")
 ```
 
-
-NOTE: 
-Removed Tracts 980100 and 980200 because they don't have geometry, population, or median income information. 
-
 ```{r}
-burglaries_tracts <- burglaries_tracts |> 
-  filter(!(TRACTCE == 980100 | TRACTCE == 980200))
+n_bins <- 6
+
+ggplot() + 
+  geom_sf(data = davidson_tracts) +
+  geom_sf(data = burglary_count, color = "grey", aes(fill = COUNT)) + 
+  scale_fill_viridis_b(breaks = seq(min(burglary_count$COUNT), max(burglary_count$COUNT), length.out = n_bins + 1)) + 
+  ggtitle("2023 Burglaries in Davidson County Per Tract")
 ```
 
-How does the median income compare throughout all tracts in Davidson County? 
 ```{r}
-burglaries_tracts |> 
+ggplot() + 
+  geom_sf(data = davidson_tracts) +
+  geom_sf(data = burglary_count, aes(fill = COUNT_PER_1000POP)) + 
+  scale_fill_gradient(low = "blue", high = "red")+ 
+  ggtitle("2023 Burglaries in Davidson County Per Tract By Population")
+```
+
+```{r}
+ggplot() + 
+  geom_sf(data = davidson_tracts) +
+  geom_sf(data = burglary_count, color = "grey", aes(fill = COUNT_PER_1000POP)) + 
+  scale_fill_viridis_b() + 
+  ggtitle("2023 Burglaries in Davidson County Per Tract")
+```
+
+```{r}
+ggplot() + 
+  geom_sf(data = burglary_count, color = "darkgrey", aes(fill = COUNT_PER_1000POP)) + 
+  scale_fill_viridis_b(breaks = seq(min(burglary_count$COUNT_PER_1000POP), max(burglary_count$COUNT_PER_1000POP), length.out = 6)) + 
+  ggtitle("2023 Burglaries in Davidson County Per Tract")
+```
+
+*We're interested in the relationship between median income and number of aggravated burglaries, so examine those variables on their own and together to see what you can find. You may want to perform additional calculations, create plots, etc.*
+
+*How does the median income compare throughout all tracts in Davidson County?* 
+```{r}
+burglary_count |> 
   st_drop_geometry() |> 
   summarise(Mean = mean(`MEDIAN INCOME`), Median = median(`MEDIAN INCOME`), Min = min(`MEDIAN INCOME`), Max = max(`MEDIAN INCOME`))
 ```
 
 ```{r}
-ggplot() +
-  geom_sf(data = davidson_tracts) +
-  geom_sf(data = tract_info, aes(fill = `MEDIAN INCOME`)) +
-  scale_fill_continuous(labels = label_comma()) +
-  labs(fill = "Median Income")
+ggplot() + 
+  geom_sf(data = burglary_count, color = "darkgrey", aes(fill = `MEDIAN INCOME`)) + 
+  scale_fill_viridis_b(breaks = seq(min(burglary_count$`MEDIAN INCOME`), max(burglary_count$`MEDIAN INCOME`), length.out = 6)) + 
+  ggtitle("Median Income in Davidson County Per Tract")
 ```
-
-What month do most burglaries occur in 2023? 
-
-group_by(month) |> 
-summarise(total_cases = sum(incident_number))
 
 ```{r}
 burglaries_tracts <- burglaries_tracts |> 
   mutate(Month = month(incident_occurred))
 
-burglaries_tracts |> 
+burglaries_permonth <- burglaries_tracts |> 
   st_drop_geometry() |> 
   group_by(Month) |> 
   summarise('Total Cases' = n())
 ```
+
 ```{r}
-str(tract_info)
+months_abbrev <- c("Jan","Feb","Mar",
+              "Apr","May","Jun",
+              "Jul","Aug","Sep",
+              "Oct","Nov","Dec")
+
+burglaries_tracts$Month_name <- months_abbrev[burglaries_tracts$Month]
+
+burglaries_permonth$Month_name <- months_abbrev[burglaries_permonth$Month]
+burglaries_permonth$Month_name <- factor(burglaries_permonth$Month_name, 
+                                         levels = c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"))
 ```
 
-Out of the week, what day do most burglaries occur in 2023? 
+```{r}
+burglaries_permonth |> 
+  ggplot(aes(x = Month_name, y = `Total Cases`)) + 
+  geom_col(fill = "darkblue") + 
+  labs(x = "Month") +
+  geom_text(aes(label = `Total Cases`), vjust = -0.5, size = 3) + 
+  ggtitle("2023 Burglaries Per Month") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+How does median income relate to number of burglaries in Davidson County? 
 
 ```{r}
+burglary_count |> 
+  ggplot(aes(x = `MEDIAN INCOME`, y = COUNT)) + geom_point()
+```
 
+```{r}
+cor(burglary_count$COUNT, burglary_count$`MEDIAN INCOME`, use = "complete.obs")
+```
+
+**Part 3 - Statistical Modeling** 
+
+Fit a Poisson regression model with target variable the rate of burglaries per census tract and with predictor the median income. Offset using the log of the population so that we are looking at the rate of burglaries per population instead of the number of burglaries. How can you interpret the meaning of the output? How do the estimates from the model compare to the observed data?
+
+```{r}
+burglary_count |> 
+  ggplot(aes(x = COUNT)) + 
+  geom_bar()
+```
+The burglary data is right-skewed (positively skewed. 
+
+```{r}
+burglary_count |> 
+  st_drop_geometry() |> 
+  summarise(Mean = mean(COUNT), Median = median(COUNT), Min = min(COUNT), Max = max(COUNT))
+```
+
+
+```{r}
+burglaries_const <- glm("COUNT ~ 1", 
+                        data = burglary_count, 
+                        family = poisson)
+
+summary(burglaries_const)
+```
+What is estimated as the mean number of the distribution: 
+```{r}
+mu = exp(coef(burglaries_const))
+```
+
+
+Plot the result. 
+```{r}
+x <- 1:39
+y <- dpois(x, lambda = mu)
+
+tibble(x = x, y = y) |> 
+  ggplot(aes(x = x, y = y)) + 
+  geom_col()
+```
+
+*Poisson Regression* 
+```{r}
+pr_burglaries <- glm("COUNT ~ `MEDIAN INCOME`", 
+                        data = burglary_count, 
+                        family = poisson)
+
+summary(pr_burglaries)
+```
+
+```{r}
+est_df <- tibble(
+  `MEDIAN INCOME` = seq(from = min(burglary_count$`MEDIAN INCOME`, na.rm = TRUE), 
+                      to = max(burglary_count$`MEDIAN INCOME`, na.rm = TRUE), 
+                      length.out = 100)
+)
+
+est_df <- est_df |>
+  bind_cols(predict(pr_burglaries, newdata = est_df, type = "response")) |>
+  rename("Estimated Mean Number of Burglaries" = "...2")
+
+est_df |>
+  ggplot(aes(x = `MEDIAN INCOME`, y = `Estimated Mean Number of Burglaries`)) +
+  geom_line()
 ```
 
